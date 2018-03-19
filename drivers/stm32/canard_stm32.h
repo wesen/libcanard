@@ -152,6 +152,8 @@ int canardSTM32Transmit(const CanardCANFrame* const frame);
  */
 int canardSTM32Receive(CanardCANFrame* const out_frame);
 
+void canardSTM32Receive_IT();
+
 /**
  * Sets up acceptance filters according to the provided list of ID and masks.
  * Note that when the interface is reinitialized, hardware acceptance filters are reset.
