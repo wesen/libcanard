@@ -383,6 +383,21 @@ int canardSTM32Transmit(const CanardCANFrame* const frame)
     return 1;
 }
 
+void canardSTM32Receive_IT() {
+    /* Enable interrupts: */
+    /*  - Enable Error warning Interrupt */
+    /*  - Enable Error passive Interrupt */
+    /*  - Enable Bus-off Interrupt */
+    /*  - Enable Last error code Interrupt */
+    /*  - Enable Error Interrupt */
+    BXCAN->IER |= CANARD_STM32_CAN_IER_EWGIE
+                  | CANARD_STM32_CAN_IER_EPVIE
+                  | CANARD_STM32_CAN_IER_BOFIE
+                  | CANARD_STM32_CAN_IER_LECIE
+                  | CANARD_STM32_CAN_IER_ERRIE;
+    BXCAN->IER |= CANARD_STM32_CAN_IER_FMPIE0;
+}
+
 
 int canardSTM32Receive(CanardCANFrame* const out_frame)
 {
