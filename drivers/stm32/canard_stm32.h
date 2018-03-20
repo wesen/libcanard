@@ -13,6 +13,22 @@
 #include <string.h>
 
 
+#ifdef STM32F303xE
+#include <stm32f303xe.h>
+#define CAN_IRQ USB_LP_CAN_RX0_IRQn
+#endif
+
+#ifdef STM32F373xC
+#include <stm32f373xc.h>
+#define CAN_IRQ CAN_RX0_IRQn
+#endif
+
+#ifdef STM32F0
+#include <stm32f0xx.h>
+#define CAN_IRQ CEC_CAN_IRQn
+#endif
+
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -153,6 +169,10 @@ int canardSTM32Transmit(const CanardCANFrame* const frame);
 int canardSTM32Receive(CanardCANFrame* const out_frame);
 
 void canardSTM32Receive_IT();
+void canardSTM32ReleaseFIFO();
+
+void canardSTM32EnablePeripheral();
+void canardSTM32DisablePeripheral();
 
 /**
  * Sets up acceptance filters according to the provided list of ID and masks.

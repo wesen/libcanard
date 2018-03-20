@@ -398,6 +398,41 @@ void canardSTM32Receive_IT() {
     BXCAN->IER |= CANARD_STM32_CAN_IER_FMPIE0;
 }
 
+void canardSTM32ReleaseFIFO() {
+    static volatile uint32_t* const RFxR[2] =
+        {
+            &BXCAN->RF0R,
+            &BXCAN->RF1R
+        };
+
+    /*
+     * This function must be polled periodically, so we use this opportunity to do it.
+     */
+    processErrorStatus();
+
+    for (uint_fast8_t i = 0; i < 2; i++)
+    {
+        if (((*RFxR[i]) & CANARD_STM32_CAN_RFR_FMP_MASK) != 0)
+        {
+            if (*RFxR[i] & CANARD_STM32_CAN_RFR_FOVR)
+            {
+                g_stats.rx_overflow_count++;
+            }
+
+            // Release FIFO entry we just read
+            *RFxR[i] = CANARD_STM32_CAN_RFR_RFOM | CANARD_STM32_CAN_RFR_FOVR | CANARD_STM32_CAN_RFR_FULL;
+        }
+    }
+}
+
+void canardSTM32EnablePeripheral() {
+    (RCC->APB1ENR |= ~(RCC_APB1ENR_CANEN));
+}
+
+void canardSTM32DisablePeripheral() {
+    (RCC->APB1ENR &= ~(RCC_APB1ENR_CANEN));
+}
+
 
 int canardSTM32Receive(CanardCANFrame* const out_frame)
 {
