@@ -426,11 +426,11 @@ void canardSTM32ReleaseFIFO() {
 }
 
 void canardSTM32EnablePeripheral() {
-    (RCC->APB1ENR |= ~(RCC_APB1ENR_CANEN));
+    NVIC_EnableIRQ(CAN_IRQ);
 }
 
 void canardSTM32DisablePeripheral() {
-    (RCC->APB1ENR &= ~(RCC_APB1ENR_CANEN));
+    NVIC_DisableIRQ(CAN_IRQ);
 }
 
 
