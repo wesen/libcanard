@@ -26,6 +26,7 @@
 
 #include "canard_internals.h"
 #include <string.h>
+#include <stm32f303xc.h>
 
 
 #undef MIN
@@ -951,6 +952,7 @@ CANARD_INTERNAL int enqueueTxFrames(CanardInstance* ins,
  */
 CANARD_INTERNAL void pushTxQueue(CanardInstance* ins, CanardTxQueueItem* item)
 {
+    NVIC_DisableIRQ(CAN_TX_IRQn);
     CANARD_ASSERT(ins != NULL);
     CANARD_ASSERT(item->frame.data_len > 0);       // UAVCAN doesn't allow zero-payload frames
 
@@ -977,6 +979,7 @@ CANARD_INTERNAL void pushTxQueue(CanardInstance* ins, CanardTxQueueItem* item)
                 previous->next = item;
                 item->next = queue;
             }
+            NVIC_EnableIRQ(CAN_TX_IRQn);
             return;
         }
         else
@@ -984,6 +987,7 @@ CANARD_INTERNAL void pushTxQueue(CanardInstance* ins, CanardTxQueueItem* item)
             if (queue->next == NULL)
             {
                 queue->next = item;
+                NVIC_EnableIRQ(CAN_TX_IRQn);
                 return;
             }
             else
@@ -993,6 +997,7 @@ CANARD_INTERNAL void pushTxQueue(CanardInstance* ins, CanardTxQueueItem* item)
             }
         }
     }
+    NVIC_EnableIRQ(CAN_TX_IRQn);
 }
 
 /**
@@ -1548,9 +1553,11 @@ CANARD_INTERNAL void initPoolAllocator(CanardPoolAllocator* allocator,
 
 CANARD_INTERNAL void* allocateBlock(CanardPoolAllocator* allocator)
 {
+    NVIC_DisableIRQ(CAN_TX_IRQn);
     // Check if there are any blocks available in the free list.
     if (allocator->free_list == NULL)
     {
+        NVIC_EnableIRQ(CAN_TX_IRQn);
         return NULL;
     }
 
@@ -1565,11 +1572,13 @@ CANARD_INTERNAL void* allocateBlock(CanardPoolAllocator* allocator)
         allocator->statistics.peak_usage_blocks = allocator->statistics.current_usage_blocks;
     }
 
+    NVIC_EnableIRQ(CAN_TX_IRQn);
     return result;
 }
 
 CANARD_INTERNAL void freeBlock(CanardPoolAllocator* allocator, void* p)
 {
+    NVIC_DisableIRQ(CAN_TX_IRQn);
     CanardPoolAllocatorBlock* block = (CanardPoolAllocatorBlock*) p;
 
     block->next = allocator->free_list;
@@ -1577,4 +1586,5 @@ CANARD_INTERNAL void freeBlock(CanardPoolAllocator* allocator, void* p)
 
     CANARD_ASSERT(allocator->statistics.current_usage_blocks > 0);
     allocator->statistics.current_usage_blocks--;
+    NVIC_EnableIRQ(CAN_TX_IRQn);
 }
