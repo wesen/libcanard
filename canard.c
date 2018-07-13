@@ -59,12 +59,6 @@
 #define TOGGLE_BIT(x)                               ((bool)(((x) >> 5) & 0x1))
 
 
-struct CanardTxQueueItem
-{
-    CanardTxQueueItem* next;
-    CanardCANFrame frame;
-};
-
 
 /*
  * API functions
@@ -92,7 +86,6 @@ void canardInit(CanardInstance* out_ins,
     out_ins->on_reception = on_reception;
     out_ins->should_accept = should_accept;
     out_ins->rx_states = NULL;
-    out_ins->tx_queue = NULL;
     out_ins->user_reference = user_reference;
 
     size_t pool_capacity = mem_arena_size / CANARD_MEM_BLOCK_SIZE;
@@ -230,22 +223,6 @@ int canardRequestOrRespond(CanardInstance* ins,
     }
 
     return result;
-}
-
-const CanardCANFrame* canardPeekTxQueue(const CanardInstance* ins)
-{
-    if (ins->tx_queue == NULL)
-    {
-        return NULL;
-    }
-    return &ins->tx_queue->frame;
-}
-
-void canardPopTxQueue(CanardInstance* ins)
-{
-    CanardTxQueueItem* item = ins->tx_queue;
-    ins->tx_queue = item->next;
-    freeBlock(&ins->allocator, item);
 }
 
 void canardHandleRxFrame(CanardInstance* ins, const CanardCANFrame* frame, uint64_t timestamp_usec)
@@ -858,205 +835,6 @@ CANARD_INTERNAL void incrementTransferID(uint8_t* transfer_id)
     }
 }
 
-CANARD_INTERNAL int enqueueTxFrames(CanardInstance* ins,
-                                    uint32_t can_id,
-                                    uint8_t* transfer_id,
-                                    uint16_t crc,
-                                    const uint8_t* payload,
-                                    uint16_t payload_len)
-{
-    CANARD_ASSERT(ins != NULL);
-    CANARD_ASSERT((can_id & CANARD_CAN_EXT_ID_MASK) == can_id);            // Flags must be cleared
-
-    if (transfer_id == NULL)
-    {
-        return -CANARD_ERROR_INVALID_ARGUMENT;
-    }
-
-    if ((payload_len > 0) && (payload == NULL))
-    {
-        return -CANARD_ERROR_INVALID_ARGUMENT;
-    }
-
-    int result = 0;
-
-    if (payload_len < CANARD_CAN_FRAME_MAX_DATA_LEN)                        // Single frame transfer
-    {
-        CanardTxQueueItem* queue_item = createTxItem(&ins->allocator);
-        if (queue_item == NULL)
-        {
-            return -CANARD_ERROR_OUT_OF_MEMORY;
-        }
-
-        memcpy(queue_item->frame.data, payload, payload_len);
-
-        queue_item->frame.data_len = (uint8_t)(payload_len + 1);
-        queue_item->frame.data[payload_len] = (uint8_t)(0xC0 | (*transfer_id & 31));
-        queue_item->frame.id = can_id | CANARD_CAN_FRAME_EFF;
-
-        pushTxQueue(ins, queue_item);
-        result++;
-    }
-    else                                                                    // Multi frame transfer
-    {
-        uint16_t data_index = 0;
-        uint8_t toggle = 0;
-        uint8_t sot_eot = 0x80;
-
-        CanardTxQueueItem* queue_item = NULL;
-
-        while (payload_len - data_index != 0)
-        {
-            queue_item = createTxItem(&ins->allocator);
-            if (queue_item == NULL)
-            {
-                return -CANARD_ERROR_OUT_OF_MEMORY;          // TODO: Purge all frames enqueued so far
-            }
-
-            uint8_t i = 0;
-            if (data_index == 0)
-            {
-                // add crc
-                queue_item->frame.data[0] = (uint8_t) (crc);
-                queue_item->frame.data[1] = (uint8_t) (crc >> 8);
-                i = 2;
-            }
-            else
-            {
-                i = 0;
-            }
-
-            for (; i < (CANARD_CAN_FRAME_MAX_DATA_LEN - 1) && data_index < payload_len; i++, data_index++)
-            {
-                queue_item->frame.data[i] = payload[data_index];
-            }
-            // tail byte
-            sot_eot = (data_index == payload_len) ? (uint8_t)0x40 : sot_eot;
-
-            queue_item->frame.data[i] = (uint8_t)(sot_eot | (toggle << 5) | (*transfer_id & 31));
-            queue_item->frame.id = can_id | CANARD_CAN_FRAME_EFF;
-            queue_item->frame.data_len = (uint8_t)(i + 1);
-            pushTxQueue(ins, queue_item);
-
-            result++;
-            toggle ^= 1;
-            sot_eot = 0;
-        }
-    }
-
-    return result;
-}
-
-/**
- * Puts frame on on the TX queue. Higher priority placed first
- */
-CANARD_INTERNAL void pushTxQueue(CanardInstance* ins, CanardTxQueueItem* item)
-{
-    NVIC_DisableIRQ(CAN_TX_IRQn);
-    CANARD_ASSERT(ins != NULL);
-    CANARD_ASSERT(item->frame.data_len > 0);       // UAVCAN doesn't allow zero-payload frames
-
-    if (ins->tx_queue == NULL)
-    {
-        ins->tx_queue = item;
-        return;
-    }
-
-    CanardTxQueueItem* queue = ins->tx_queue;
-    CanardTxQueueItem* previous = ins->tx_queue;
-
-    while (queue != NULL)
-    {
-        if (isPriorityHigher(queue->frame.id, item->frame.id)) // lower number wins
-        {
-            if (queue == ins->tx_queue)
-            {
-                item->next = queue;
-                ins->tx_queue = item;
-            }
-            else
-            {
-                previous->next = item;
-                item->next = queue;
-            }
-            NVIC_EnableIRQ(CAN_TX_IRQn);
-            return;
-        }
-        else
-        {
-            if (queue->next == NULL)
-            {
-                queue->next = item;
-                NVIC_EnableIRQ(CAN_TX_IRQn);
-                return;
-            }
-            else
-            {
-                previous = queue;
-                queue = queue->next;
-            }
-        }
-    }
-    NVIC_EnableIRQ(CAN_TX_IRQn);
-}
-
-/**
- * Creates new tx queue item from allocator
- */
-CANARD_INTERNAL CanardTxQueueItem* createTxItem(CanardPoolAllocator* allocator)
-{
-    CanardTxQueueItem* item = (CanardTxQueueItem*) allocateBlock(allocator);
-    if (item == NULL)
-    {
-        return NULL;
-    }
-    memset(item, 0, sizeof(*item));
-    return item;
-}
-
-/**
- * Returns true if priority of rhs is higher than id
- */
-CANARD_INTERNAL bool isPriorityHigher(uint32_t rhs, uint32_t id)
-{
-    const uint32_t clean_id = id & CANARD_CAN_EXT_ID_MASK;
-    const uint32_t rhs_clean_id = rhs & CANARD_CAN_EXT_ID_MASK;
-
-    /*
-     * STD vs EXT - if 11 most significant bits are the same, EXT loses.
-     */
-    const bool ext = (id & CANARD_CAN_FRAME_EFF) != 0;
-    const bool rhs_ext = (rhs & CANARD_CAN_FRAME_EFF) != 0;
-    if (ext != rhs_ext)
-    {
-        uint32_t arb11 = ext ? (clean_id >> 18) : clean_id;
-        uint32_t rhs_arb11 = rhs_ext ? (rhs_clean_id >> 18) : rhs_clean_id;
-        if (arb11 != rhs_arb11)
-        {
-            return arb11 < rhs_arb11;
-        }
-        else
-        {
-            return rhs_ext;
-        }
-    }
-
-    /*
-     * RTR vs Data frame - if frame identifiers and frame types are the same, RTR loses.
-     */
-    const bool rtr = (id & CANARD_CAN_FRAME_RTR) != 0;
-    const bool rhs_rtr = (rhs & CANARD_CAN_FRAME_RTR) != 0;
-    if (clean_id == rhs_clean_id && rtr != rhs_rtr)
-    {
-        return rhs_rtr;
-    }
-
-    /*
-     * Plain ID arbitration - greater value loses.
-     */
-    return clean_id < rhs_clean_id;
-}
-
 /**
  * preps the rx state for the next transfer. does not delete the state
  */
@@ -1123,7 +901,7 @@ CANARD_INTERNAL CanardRxState* traverseRxStates(CanardInstance* ins, uint32_t tr
     if (states == NULL) // initialize CanardRxStates
     {
         states = createRxState(&ins->allocator, transfer_descriptor);
-        
+
         if(states == NULL)
         {
             return NULL;
@@ -1551,13 +1329,11 @@ CANARD_INTERNAL void initPoolAllocator(CanardPoolAllocator* allocator,
     allocator->statistics.peak_usage_blocks = 0;
 }
 
-CANARD_INTERNAL void* allocateBlock(CanardPoolAllocator* allocator)
+void* allocateBlock(CanardPoolAllocator* allocator)
 {
-    NVIC_DisableIRQ(CAN_TX_IRQn);
     // Check if there are any blocks available in the free list.
     if (allocator->free_list == NULL)
     {
-        NVIC_EnableIRQ(CAN_TX_IRQn);
         return NULL;
     }
 
@@ -1572,13 +1348,11 @@ CANARD_INTERNAL void* allocateBlock(CanardPoolAllocator* allocator)
         allocator->statistics.peak_usage_blocks = allocator->statistics.current_usage_blocks;
     }
 
-    NVIC_EnableIRQ(CAN_TX_IRQn);
     return result;
 }
 
-CANARD_INTERNAL void freeBlock(CanardPoolAllocator* allocator, void* p)
+void freeBlock(CanardPoolAllocator* allocator, void* p)
 {
-    NVIC_DisableIRQ(CAN_TX_IRQn);
     CanardPoolAllocatorBlock* block = (CanardPoolAllocatorBlock*) p;
 
     block->next = allocator->free_list;
@@ -1586,5 +1360,4 @@ CANARD_INTERNAL void freeBlock(CanardPoolAllocator* allocator, void* p)
 
     CANARD_ASSERT(allocator->statistics.current_usage_blocks > 0);
     allocator->statistics.current_usage_blocks--;
-    NVIC_EnableIRQ(CAN_TX_IRQn);
 }

@@ -125,10 +125,10 @@ typedef enum
 /*
  * Forward declarations.
  */
+
 typedef struct CanardInstance CanardInstance;
 typedef struct CanardRxTransfer CanardRxTransfer;
 typedef struct CanardRxState CanardRxState;
-typedef struct CanardTxQueueItem CanardTxQueueItem;
 
 /**
  * The application must implement this function and supply a pointer to it to the library during initialization.
@@ -232,7 +232,6 @@ struct CanardInstance
     CanardPoolAllocator allocator;                  ///< Pool allocator
 
     CanardRxState* rx_states;                       ///< RX transfer states
-    CanardTxQueueItem* tx_queue;                    ///< TX frames awaiting transmission
 
     void* user_reference;                           ///< User pointer that can link this instance with other objects
 };
@@ -370,22 +369,6 @@ int canardRequestOrRespond(CanardInstance* ins,             ///< Library instanc
                            uint16_t payload_len);           ///< Length of the above, in bytes
 
 /**
- * Returns a pointer to the top priority frame in the TX queue.
- * Returns NULL if the TX queue is empty.
- * The application will call this function after canardBroadcast() or canardRequestOrRespond() to transmit generated
- * frames over the CAN bus.
- */
-const CanardCANFrame* canardPeekTxQueue(const CanardInstance* ins);
-
-/**
- * Removes the top priority frame from the TX queue.
- * The application will call this function after canardPeekTxQueue() once the obtained frame has been processed.
- * Calling canardBroadcast() or canardRequestOrRespond() between canardPeekTxQueue() and canardPopTxQueue()
- * is NOT allowed, because it may change the frame at the top of the TX queue.
- */
-void canardPopTxQueue(CanardInstance* ins);
-
-/**
  * Processes a received CAN frame with a timestamp.
  * The application will call this function when it receives a new frame from the CAN bus.
  */
@@ -490,6 +473,26 @@ CanardPoolAllocatorStatistics canardGetPoolAllocatorStatistics(CanardInstance* i
 uint16_t canardConvertNativeFloatToFloat16(float value);
 float canardConvertFloat16ToNativeFloat(uint16_t value);
 
+
+/// Returns the number of frames enqueued
+int enqueueTxFrames(CanardInstance *ins,
+                    uint32_t can_id,
+                    uint8_t *transfer_id,
+                    uint16_t crc,
+                    const uint8_t *payload,
+                    uint16_t payload_len);
+
+
+/**
+ * Allocates a block from the given pool allocator.
+ */
+void *allocateBlock(CanardPoolAllocator *allocator);
+
+/**
+ * Frees a memory block previously returned by canardAllocateBlock.
+ */
+void freeBlock(CanardPoolAllocator *allocator,
+                               void *p);
 
 #ifdef __cplusplus
 }
